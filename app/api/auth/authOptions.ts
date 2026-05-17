@@ -13,7 +13,8 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
     }),
   ],
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.NEXTAUTH_SECRET || "vortex_auditor_prod_secret_8492048XyZ!@#123",
+
   session: {
     strategy: "jwt",
   },
