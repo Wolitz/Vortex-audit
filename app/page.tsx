@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 
 import { 
   BarChartBig, Clock3, LayoutDashboard, Target, Users, BookOpen, Settings, Search, 
-  Mail, Calendar, ArrowLeft, UploadCloud, FileVideo, X, CheckCircle, 
+  Mail, Calendar, ArrowLeft, UploadCloud, FileVideo, X, CheckCircle, Check,
   AlertTriangle, Sparkles, Zap, BrainCircuit, Mic, FileText, BotMessageSquare, ShieldCheck, Trash2, PlayCircle, Download, LogOut
 } from "lucide-react";
 
@@ -36,48 +36,83 @@ export default function Home() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [points, setPoints] = useState<{id: number, cx: string, cy: string, r: number}[]>([]);
   
+  // Pricing Modal State
+  const [showPricing, setShowPricing] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState<string | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null); 
 
-  const { data: session, status } = useSession();
+  // FIX: Destructure the 'update' function to force session refreshes
+  const { data: session, status, update } = useSession();
   const router = useRouter();
+  const currentTier = useMemo(() => session?.user?.planTier || "FREE", [session?.user?.planTier]);
+
 
   // ==========================================
   // 2. ALL USE-EFFECTS & MEMOS
   // ==========================================
   
-  // Auth Redirect Effect
-  useEffect(() => {
+// Instead of your current useEffect, use this cleaner version:
+useEffect(() => {
+    // If we are still loading, don't do anything yet
+    if (status === "loading") return;
+
+    // Only if loading is finished AND we are truly unauthenticated, redirect
     if (status === "unauthenticated") {
       router.push("/login");
     }
   }, [status, router]);
 
-  // Load History Effect
+  // FIX: Listen for Stripe Redirects and Refresh Session
+// FIX: Listen for Stripe Redirects, Wait for Webhook, and Refresh Session
   useEffect(() => {
-    setTimeout(() => {
-      const savedHistory = localStorage.getItem("vortexAuditHistory");
-      if (savedHistory) {
-        setAuditHistory(JSON.parse(savedHistory));
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      
+      if (urlParams.get("success") === "true") {
+        // 1. Hide the pricing modal immediately
+        setShowPricing(false);
+        
+        // 2. Clean up the URL so it looks professional
+        window.history.replaceState(null, "", window.location.pathname);
+        
+        // 3. THE FIX: Wait 2.5 seconds to let the Stripe Webhook update the database
+        // before forcing NextAuth to fetch the fresh data.
+        setTimeout(() => {
+          window.location.href = "/"; // This triggers a full page reload
+        }, 1000);
       }
-      setIsLoadingHistory(false); 
-    }, 600);
-  }, []);
+      
+      if (urlParams.get("canceled") === "true") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
+  }, [update]);
 
-  // Video URL Memo
+  useEffect(() => {
+    if (session?.user?.id) {
+      setTimeout(() => {
+        const savedHistory = localStorage.getItem(`wobAuditHistory_${session.user.id}`);
+        if (savedHistory) {
+          setAuditHistory(JSON.parse(savedHistory));
+        }
+        setIsLoadingHistory(false); 
+      }, 600);
+    }
+  }, [session?.user?.id]);
+
   const videoUrl = useMemo(() => {
     if (file) return URL.createObjectURL(file);
     return "";
   }, [file]);
 
-  // Cleanup Video URL Effect
   useEffect(() => {
     return () => {
       if (videoUrl) URL.revokeObjectURL(videoUrl);
     };
   }, [videoUrl]);
 
-  // Background Points Effect
   useEffect(() => {
     const p = [];
     for (let i = 0; i < 20; i++) {
@@ -95,7 +130,7 @@ export default function Home() {
   // ==========================================
   // 3. EARLY RETURNS (Must be after ALL hooks)
   // ==========================================
-  if (status === "loading" || status === "unauthenticated") {
+  if (status === "loading") {
     return (
       <div className="h-screen w-full bg-[#060606] flex items-center justify-center">
         <Sparkles className="text-[#2DD4BF] animate-pulse" size={40} />
@@ -103,18 +138,37 @@ export default function Home() {
     );
   }
 
+  if (status !== "authenticated") {
+    return (
+      <div className="h-screen w-full bg-[#060606] flex items-center justify-center">
+        <Sparkles className="text-[#2DD4BF] animate-pulse" size={40} />
+      </div>
+    );
+  }
+
+  // Get current tier with a safe fallback
+  // This will now update automatically when session.user changes
   // ==========================================
   // 4. REGULAR FUNCTIONS (Audit & Stripe)
   // ==========================================
   
-  const handleUpgrade = async () => {
+  const handleUpgrade = async (tier: "STARTER" | "PRO" | "MAX") => {
     try {
-      const response = await fetch("/api/stripe/checkout", { method: "POST" });
+      setIsRedirecting(tier);
+      const response = await fetch("/api/stripe/checkout", { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier }) 
+      });
       const data = await response.json();
+      
+      if (!response.ok) throw new Error(data.error);
       if (data.url) window.location.href = data.url;
-    } catch (error) {
+      
+    } catch (error: any) {
       console.error("Failed to redirect to checkout", error);
-      alert("Billing system is currently syncing. Please try again later.");
+      alert(error.message || "Billing system is currently syncing. Please try again later.");
+      setIsRedirecting(null);
     }
   };
 
@@ -129,9 +183,11 @@ export default function Home() {
   };
 
   const clearHistory = () => {
-    if (confirm("Are you sure you want to purge the manifest logs?")) {
+    if (confirm("Are you sure you want to purge your personal manifest logs?")) {
       setAuditHistory([]);
-      localStorage.removeItem("vortexAuditHistory");
+      if (session?.user?.id) {
+        localStorage.removeItem(`wobAuditHistory_${session.user.id}`);
+      }
     }
   };
 
@@ -149,7 +205,7 @@ export default function Home() {
 
     const reportContent = `
 =========================================
-      VORTEX COMPLIANCE MANIFEST
+      WOB COMPLIANCE MANIFEST
 =========================================
 Entity Scanned: ${file.name}
 Audit Scope: ${auditProfile}
@@ -170,7 +226,7 @@ AI DIRECTIVE / RECOMMENDATIONS
 ${auditResult.recommendations || "No further action required. Ready for upload."}
 
 =========================================
-Generated by Vortex Auditor
+Generated by WOB Analysis Engine
 =========================================
     `;
 
@@ -179,7 +235,7 @@ Generated by Vortex Auditor
     
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Vortex_Manifest_${file.name.replace(/\.[^/.]+$/, "")}.txt`;
+    a.download = `WOB_Manifest_${file.name.replace(/\.[^/.]+$/, "")}.txt`;
     document.body.appendChild(a);
     a.click();
     
@@ -228,13 +284,21 @@ Generated by Vortex Auditor
     setAuditResult(null); 
   };
 
-  const runAudit = async () => {
+ const runAudit = async () => {
+    // 1. Safety check
     if (!file) return;
+
+    // 2. STRICT PAYWALL CHECK: Users must have at least the Starter tier
+    if (currentTier === "FREE") {
+      setShowPricing(true);
+      return;
+    }
 
     setIsAuditing(true);
     
     const formData = new FormData();
-    formData.append("video", file);
+    // The ! tells TypeScript "I promise 'file' is not null"
+    formData.append("video", file!); 
     formData.append("profile", auditProfile);
 
     try {
@@ -243,11 +307,16 @@ Generated by Vortex Auditor
         body: formData, 
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error("Audit failed");
+        if (response.status === 429) {
+          setShowPricing(true);
+          throw new Error(data.error || "Usage limit reached.");
+        }
+        throw new Error(data.error || "Audit failed");
       }
 
-      const data = await response.json();
       setAuditResult(data);
       const newAuditRecord = {
         id: Date.now(),
@@ -259,13 +328,15 @@ Generated by Vortex Auditor
 
       setAuditHistory((prev) => {
         const updatedHistory = [newAuditRecord, ...prev].slice(0, 20); 
-        localStorage.setItem("vortexAuditHistory", JSON.stringify(updatedHistory));
+        if (session?.user?.id) {
+          localStorage.setItem(`wobAuditHistory_${session.user.id}`, JSON.stringify(updatedHistory));
+        }
         return updatedHistory;
       });
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("There was an error processing the video.");
+      alert(error.message || "There was an error processing the video.");
     } finally {
       setIsAuditing(false);
     }
@@ -277,6 +348,117 @@ Generated by Vortex Auditor
   // ==========================================
   return (
     <main className={`min-h-screen bg-[#060606] text-[#E0E0E0] ${inter.className}`}>
+      
+      {/* --- PRICING MODAL OVERLAY --- */}
+      <AnimatePresence>
+        {showPricing && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto"
+          >
+            <div className="absolute inset-0" onClick={() => setShowPricing(false)}></div>
+            
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="relative w-full max-w-5xl bg-[#0a0a0a] border border-[#1A1A1A] rounded-3xl p-8 shadow-2xl z-10"
+            >
+              <button 
+                onClick={() => setShowPricing(false)}
+                className="absolute top-6 right-6 p-2 text-gray-500 hover:text-white hover:bg-[#1A1A1A] rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="text-center mb-10 mt-4">
+                <h2 className="text-3xl font-extrabold tracking-tight mb-3">Upgrade Your Engine</h2>
+                <p className="text-gray-400">Select a tier to unlock the AI manifest and start scanning.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                {/* STARTER TIER */}
+                <div className="bg-[#111] border border-[#262626] rounded-2xl p-6 flex flex-col hover:border-[#2DD4BF]/50 transition-colors">
+                  <h3 className="text-xl font-bold text-white mb-2">Starter</h3>
+                  <div className="flex items-baseline mb-4">
+                    <span className="text-4xl font-extrabold">$10</span>
+                    <span className="text-gray-500 ml-1">/mo</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-6 flex-grow">Perfect for growing creators making weekly videos.</p>
+                  
+                  <ul className="space-y-3 mb-8 text-sm text-gray-300">
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#2DD4BF]" /><span><strong>30</strong> AI Audits per month</span></li>
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#2DD4BF]" /><span>Standard Processing Speed</span></li>
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#2DD4BF]" /><span>7-Day Free Trial</span></li>
+                  </ul>
+
+                  <button 
+                    onClick={() => handleUpgrade("STARTER")}
+                    disabled={isRedirecting !== null}
+                    className="w-full py-3 rounded-xl bg-[#1A1A1A] hover:bg-[#262626] border border-[#333] text-white font-medium transition-colors"
+                  >
+                    {isRedirecting === "STARTER" ? "Syncing..." : "Start Free Trial"}
+                  </button>
+                </div>
+
+                {/* PRO TIER */}
+                <div className="bg-gradient-to-b from-[#1A1A1A] to-[#0a0a0a] border border-[#A78BFA] rounded-2xl p-6 flex flex-col relative transform md:-translate-y-4 shadow-[0_0_30px_rgba(167,139,250,0.15)]">
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-[#A78BFA] text-black text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest">Most Popular</div>
+                  <h3 className="text-xl font-bold text-[#A78BFA] mb-2 mt-2">Pro</h3>
+                  <div className="flex items-baseline mb-4">
+                    <span className="text-4xl font-extrabold text-white">$19</span>
+                    <span className="text-gray-500 ml-1">/mo</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-6 flex-grow">The sweet spot for daily uploaders and serious channels.</p>
+                  
+                  <ul className="space-y-3 mb-8 text-sm text-gray-200">
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#A78BFA]" /><span><strong>60</strong> AI Audits per month</span></li>
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#A78BFA]" /><span>Fast Engine Processing</span></li>
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#A78BFA]" /><span>Export Manifest Data</span></li>
+                  </ul>
+
+                  <button 
+                    onClick={() => handleUpgrade("PRO")}
+                    disabled={isRedirecting !== null}
+                    className="w-full py-3 rounded-xl bg-[#A78BFA] hover:bg-[#b8a1fa] text-black font-bold transition-colors shadow-lg"
+                  >
+                    {isRedirecting === "PRO" ? "Syncing..." : "Upgrade to Pro"}
+                  </button>
+                </div>
+
+                {/* MAX TIER */}
+                <div className="bg-[#111] border border-[#262626] rounded-2xl p-6 flex flex-col hover:border-[#2DD4BF]/50 transition-colors">
+                  <h3 className="text-xl font-bold text-white mb-2">Max</h3>
+                  <div className="flex items-baseline mb-4">
+                    <span className="text-4xl font-extrabold">$45</span>
+                    <span className="text-gray-500 ml-1">/mo</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-6 flex-grow">Agency volume. Audit multiple channels daily without limits.</p>
+                  
+                  <ul className="space-y-3 mb-8 text-sm text-gray-300">
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#2DD4BF]" /><span><strong>150</strong> AI Audits per month</span></li>
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#2DD4BF]" /><span>Priority Queueing</span></li>
+                    <li className="flex items-center space-x-3"><Check size={16} className="text-[#2DD4BF]" /><span>Multi-Profile Strictness</span></li>
+                  </ul>
+
+                  <button 
+                    onClick={() => handleUpgrade("MAX")}
+                    disabled={isRedirecting !== null}
+                    className="w-full py-3 rounded-xl bg-[#1A1A1A] hover:bg-[#262626] border border-[#333] text-white font-medium transition-colors"
+                  >
+                    {isRedirecting === "MAX" ? "Syncing..." : "Get Max"}
+                  </button>
+                </div>
+
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="flex h-screen w-full relative overflow-hidden">
         
         <div className="absolute inset-0 z-0 opacity-10 pointer-events-none">
@@ -288,13 +470,13 @@ Generated by Vortex Auditor
         <aside className="w-64 z-10 border-r border-[#1A1A1A] bg-black/90 p-8 flex flex-col space-y-12 backdrop-blur-sm">
           <div className="flex items-center space-x-3">
             <Sparkles className={accentText} size={28} />
-            <h1 className="text-2xl font-bold tracking-tight">Vortex</h1>
+            <h1 className="text-2xl font-bold tracking-tight">WOB</h1>
           </div>
 
           <nav className="flex-grow space-y-4">
             <SidebarItem 
               icon={FileVideo} 
-              label="Audit Vortex" 
+              label="Audit Engine" 
               active={activeTab === "Audit Vortex"} 
               onClick={() => setActiveTab("Audit Vortex")} 
             />
@@ -397,7 +579,7 @@ Generated by Vortex Auditor
                           </div>
                           <div>
                             <p className="text-lg font-medium text-[#E0E0E0]">
-                              <span className={accentText}>Initiate upload</span> or draw video entity
+                              <span className={accentText}>Initiate upload</span> or drag video entity
                             </p>
                             <p className={`${subtleText} mt-1`}>MP4, MOV, WebM (Max 100MB)</p>
                           </div>
@@ -694,9 +876,13 @@ Generated by Vortex Auditor
               <div className="flex items-center space-x-3">
                 <div className="text-right flex flex-col items-end">
                   <div className="flex items-center space-x-2">
-                    {session?.user?.isPro && (
-                      <span className="bg-[#A78BFA] text-black text-[10px] px-2 py-0.5 rounded-full font-bold shadow-[0_0_10px_rgba(167,139,250,0.4)]">PRO</span>
+                    
+                    {currentTier !== "FREE" && (
+                      <span className="bg-[#A78BFA] text-black text-[10px] px-2 py-0.5 rounded-full font-bold shadow-[0_0_10px_rgba(167,139,250,0.4)] uppercase">
+                        {currentTier}
+                      </span>
                     )}
+
                     <p className="text-sm font-semibold">{session?.user?.name || "Authorized User"}</p>
                   </div>
                   <button 
@@ -717,23 +903,33 @@ Generated by Vortex Auditor
               </div>
             </header>
 
-            {/* --- CONDITIONAL UPGRADE / MANAGE BILLING CARD --- */}
-            {session?.user?.isPro ? (
+            {/* --- SUBSCRIPTION MANAGEMENT CARD --- */}
+            {currentTier !== "FREE_TRIAL" ? (
               <div className="bg-white/5 border border-white/10 rounded-3xl p-6 relative overflow-hidden mb-8 shadow-inner">
                 <div className="relative z-10">
                   <div className="flex items-center space-x-2 mb-2">
                     <ShieldCheck className="text-[#2DD4BF]" size={18} />
-                    <h3 className="font-bold text-[#E0E0E0]">Vortex Pro Active</h3>
+                    <h3 className="font-bold text-[#E0E0E0] capitalize">WOB {currentTier.toLowerCase()} Active</h3>
                   </div>
                   <p className="text-xs text-gray-400 mb-5 leading-relaxed">
-                    Your unlimited AI manifest access and deep codex logging are fully enabled.
+                    Your expanded AI manifest access and deep codex logging are fully enabled.
                   </p>
-                  <button 
-                    onClick={handlePortal}
-                    className="w-full bg-[#1A1A1A] hover:bg-[#262626] border border-[#262626] text-white font-bold py-3 rounded-xl text-sm transition-colors"
-                  >
-                    Manage Subscription
-                  </button>
+                  <div className="flex space-x-3">
+                    <button 
+                      onClick={handlePortal}
+                      className="flex-1 bg-[#1A1A1A] hover:bg-[#262626] border border-[#262626] text-white font-bold py-3 rounded-xl text-xs transition-colors"
+                    >
+                      Manage Plan
+                    </button>
+                    {currentTier !== "MAX" && (
+                      <button 
+                        onClick={() => setShowPricing(true)}
+                        className="flex-1 bg-[#A78BFA]/10 hover:bg-[#A78BFA]/20 border border-[#A78BFA]/30 text-[#A78BFA] font-bold py-3 rounded-xl text-xs transition-colors"
+                      >
+                        Upgrade
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -742,21 +938,20 @@ Generated by Vortex Auditor
                 <div className="relative z-10">
                   <div className="flex items-center space-x-2 mb-2">
                     <Zap className="text-[#A78BFA]" size={18} fill="currentColor" />
-                    <h3 className="font-bold text-[#E0E0E0]">Vortex Pro Engine</h3>
+                    <h3 className="font-bold text-[#E0E0E0]">Account Limited</h3>
                   </div>
                   <p className="text-xs text-gray-400 mb-5 leading-relaxed">
-                    Unlock unlimited AI manifests, 4K video entity scanning, and deep historical codex logging.
+                    You must select a billing plan to unlock the AI manifest. All plans include a 7-day free trial.
                   </p>
                   <button 
-                    onClick={handleUpgrade}
+                    onClick={() => setShowPricing(true)}
                     className="w-full bg-[#A78BFA] hover:bg-[#b8a1fa] text-black font-bold py-3 rounded-xl text-sm transition-colors shadow-[0_0_15px_rgba(167,139,250,0.3)]"
                   >
-                    Upgrade to Pro — $20/mo
+                    View Upgrade Plans
                   </button>
                 </div>
               </div>
             )}
-            {/* --------------------------------------------------- */}
 
             <StatGauge 
               title="Global Monetization Manifest" 

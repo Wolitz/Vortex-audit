@@ -11,7 +11,10 @@ declare module "next-auth" {
       name?: string | null
       email?: string | null
       image?: string | null
-      isPro?: boolean //
+      
+      // --- Custom WOB Analysis Fields ---
+      planTier?: string
+      videosAudited?: number
     }
   }
 }

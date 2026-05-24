@@ -5,24 +5,24 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL") // <-- Add this line
+  directUrl = env("DIRECT_URL")
 }
 
 // --- NextAuth Standard Tables ---
 
 model Account {
-  id                 String  @id @default(cuid())
-  userId             String
-  type               String
-  provider           String
-  providerAccountId  String
-  refresh_token      String?  @db.Text
-  access_token       String?  @db.Text
-  expires_at         Int?
-  token_type         String?
-  scope              String?
-  id_token           String?  @db.Text
-  session_state      String?
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -46,11 +46,19 @@ model User {
   accounts      Account[]
   sessions      Session[]
   audits        Audit[]   // Links the user to their specific video audits
+
+  // --- STRIPE & SUBSCRIPTION DATA ---
   stripeCustomerId       String?   @unique
   stripeSubscriptionId   String?   @unique
-  stripePriceId          String?
-  stripeCurrentPeriodEnd DateTime?
-  isPro                  Boolean   @default(false)
+  stripePriceId          String?   // Maps to the exact Stripe product ID (Starter, Pro, Max)
+  stripeCurrentPeriodEnd DateTime? // Tells Next.js exactly when their trial or month expires
+  
+  planTier               String    @default("FREE") // "FREE_TRIAL", "STARTER", "PRO", "MAX"
+  subscriptionStatus     String    @default("active")     // "active", "canceled", "past_due"
+
+  // --- WOB ANALYSIS USAGE TRACKING ---
+  videosAudited          Int       @default(0)            // Counts up to 30, 60, or 150. Resets via Stripe Webhook.
+  lastAuditDate          DateTime?                        // Prevents trial users from spamming the "1 a day" rule.
 }
 
 model VerificationToken {
@@ -64,16 +72,16 @@ model VerificationToken {
 // --- Custom Application Tables ---
 
 model Audit {
-  id          String   @id @default(cuid())
-  userId      String   
-  title       String   
-  scope       String   
-  status      String   
-  compliance  Int      
-  riskScore   Int
-  issues      Json?    // Stores the array of timestamps and policy breaks
-  directive   String?  @db.Text // Stores the AI recommendations
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  userId     String   
+  title      String   
+  scope      String   
+  status     String   
+  compliance Int      
+  riskScore  Int
+  issues     Json?    // Stores the array of timestamps and policy breaks
+  directive  String?  @db.Text // Stores the AI recommendations
+  createdAt  DateTime @default(now())
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
