@@ -79,11 +79,11 @@ export async function POST(req: Request) {
       await prisma.user.updateMany({
         where: { stripeSubscriptionId: subscription.id },
         data: {
-          planTier: "FREE_TRIAL",
+          planTier: "FREE", // <-- Make sure this says "FREE"
           subscriptionStatus: "canceled",
         },
       });
-      console.log(`Subscription ${subscription.id} canceled. User downgraded.`);
+      console.log(`Subscription ${subscription.id} canceled. User downgraded to FREE.`);
     }
 
     // Catch past-due/unpaid cards without fully deleting their account yet

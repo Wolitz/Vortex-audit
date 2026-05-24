@@ -38,27 +38,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "User profile not found." }, { status: 404 });
     }
 
-    // TRIAL CHECK: 1 video per day limit
-    if (user.planTier === "FREE_TRIAL") {
-      const today = new Date().toDateString();
-      const lastAudit = user.lastAuditDate?.toDateString();
-
-      if (today === lastAudit) {
-        return NextResponse.json({ 
-          error: "Trial Limit Reached: You can only analyze 1 video per day on the free trial. Upgrade to audit more!" 
-        }, { status: 429 });
-      }
+    // STRICT PAYWALL: Block access until they select a tier
+    if (user.planTier === "FREE" || user.planTier === "FREE_TRIAL") {
+      return NextResponse.json({ 
+        error: "Access Denied: You must start a 7-day free trial to unlock the Audit Engine." 
+      }, { status: 403 });
     }
 
-    // PAID TIER CHECK: Monthly volume limit
-    if (user.planTier !== "FREE_TRIAL") {
-      const currentLimit = PLAN_LIMITS[user.planTier as keyof typeof PLAN_LIMITS] || 0;
-      
-      if (user.videosAudited >= currentLimit) {
-        return NextResponse.json({ 
-          error: `Monthly limit reached (${currentLimit}/${currentLimit}). Upgrade your plan to keep auditing!` 
-        }, { status: 429 });
-      }
+    // TIER LIMITS CHECK: Make sure they have capacity for their specific plan
+    const currentLimit = PLAN_LIMITS[user.planTier as keyof typeof PLAN_LIMITS] || 0;
+    
+    if (user.videosAudited >= currentLimit) {
+      return NextResponse.json({ 
+        error: `Monthly limit reached (${currentLimit}/${currentLimit}). Upgrade your plan to keep auditing!` 
+      }, { status: 429 });
     }
 
     // ==========================================
