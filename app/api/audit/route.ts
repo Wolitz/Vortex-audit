@@ -15,6 +15,30 @@ const apiKey = process.env.GEMINI_API_KEY!;
 const genAI = new GoogleGenerativeAI(apiKey);
 const fileManager = new GoogleAIFileManager(apiKey);
 
+// ==========================================
+// HELPER: EXPONENTIAL BACKOFF FOR 503 ERRORS
+// ==========================================
+async function callGeminiWithRetry(model: any, promptData: any[], maxRetries = 4, delay = 2000) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await model.generateContent(promptData); 
+      return response;
+    } catch (error: any) {
+      if (error.message?.includes("503") || error.status === 503) {
+        if (attempt === maxRetries) {
+          throw new Error("The AI engine is currently overloaded due to high global demand. Please try again in a few minutes.");
+        }
+        console.warn(`[Attempt ${attempt + 1}] Gemini overloaded. Retrying in ${delay}ms...`);
+        await new Promise(res => setTimeout(res, delay));
+        delay *= 2; // Double the wait time
+      } else {
+        // If it's a different error (like a 400 Bad Request), throw it immediately
+        throw error;
+      }
+    }
+  }
+}
+
 export async function POST(req: Request) {
   let tempFilePath = "";
 
@@ -172,10 +196,16 @@ export async function POST(req: Request) {
       }
     `;
 
-    const result = await model.generateContent([
+    // Swap the original call with the retry wrapper
+    const result = await callGeminiWithRetry(model, [
       { fileData: { mimeType: geminiFile.mimeType, fileUri: geminiFile.uri } },
       { text: prompt },
     ]);
+
+    // Ensure result exists before trying to access .response.text()
+    if (!result || !result.response) {
+       throw new Error("Received an empty response from the AI engine.");
+    }
 
     const responseText = result.response.text();
     const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
