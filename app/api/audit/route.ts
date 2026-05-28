@@ -82,6 +82,7 @@ export async function POST(req: Request) {
     // 2. FETCH FROM VERCEL BLOB
     // ==========================================
     
+
     // ==========================================
     // 2. FETCH FROM VERCEL BLOB
     // ==========================================
@@ -95,8 +96,11 @@ export async function POST(req: Request) {
 
     console.log(`Attempting to download video from Vercel Blob: ${videoUrl}`);
     
-    // Use 'no-store' to bypass Next.js cache bugs
-    const videoResponse = await fetch(videoUrl, { 
+    // Safely encode the URL string to prevent 404 formatting errors
+    const safeUrl = new URL(videoUrl).toString();
+    
+    // Use 'no-store' to bypass Next.js cache bugs and fetch using the safeUrl
+    const videoResponse = await fetch(safeUrl, { 
       cache: 'no-store',
       headers: { 'Accept': '*/*' }
     });
