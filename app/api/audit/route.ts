@@ -82,6 +82,10 @@ export async function POST(req: Request) {
     // 2. FETCH FROM VERCEL BLOB
     // ==========================================
     
+    // ==========================================
+    // 2. FETCH FROM VERCEL BLOB
+    // ==========================================
+    
     const body = await req.json();
     const { videoUrl, profile, fileName } = body;
 
@@ -89,17 +93,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No video URL provided" }, { status: 400 });
     }
 
-    console.log("Downloading video from Vercel Blob to temporary storage...");
-    const videoResponse = await fetch(videoUrl);
-    if (!videoResponse.ok) throw new Error("Failed to fetch video from cloud storage.");
+    console.log(`Attempting to download video from Vercel Blob: ${videoUrl}`);
+    
+    // Use 'no-store' to bypass Next.js cache bugs
+    const videoResponse = await fetch(videoUrl, { 
+      cache: 'no-store',
+      headers: { 'Accept': '*/*' }
+    });
+    
+    if (!videoResponse.ok) {
+      const errorText = await videoResponse.text();
+      console.error(`BLOB FETCH FAILED! Status: ${videoResponse.status}. Details: ${errorText}`);
+      throw new Error(`Failed to fetch video from cloud storage (Status ${videoResponse.status}).`);
+    }
 
     // Load the file into the server's temporary RAM
     const arrayBuffer = await videoResponse.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     
-    tempFilePath = join(os.tmpdir(), `${Date.now()}-${fileName}`);
+    // Remove spaces from the filename to prevent processing errors
+    const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+    tempFilePath = join(os.tmpdir(), `${Date.now()}-${safeFileName}`);
     await writeFile(tempFilePath, buffer);
-
     // ==========================================
     // 3. UPLOAD TO GEMINI ENGINE & CLEANUP
     // ==========================================
