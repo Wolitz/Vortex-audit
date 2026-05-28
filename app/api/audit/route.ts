@@ -5,7 +5,7 @@ import { getServerSession } from "next-auth";
 import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import os from "os";
-
+import { del } from '@vercel/blob';
 // Your custom SaaS imports
 import prisma from "@/lib/prisma";
 import { PLAN_LIMITS, MAX_FILE_SIZE_MB } from "@/lib/pricing";
@@ -82,52 +82,46 @@ export async function POST(req: Request) {
     // 2. FILE EXTRACTION & SAFETY CHECKS
     // ==========================================
     
-    const formData = await req.formData();
-    const file = formData.get("video") as File;
-    const profile = formData.get("profile") as string || "Standard";
-
-    if (!file) {
-      return NextResponse.json({ error: "No video file provided" }, { status: 400 });
-    }
-
-    // FILE SIZE CHECK: Protect your Vercel server from crashing
-    const fileSizeMB = file.size / (1024 * 1024);
-    if (fileSizeMB > MAX_FILE_SIZE_MB) {
-      return NextResponse.json({ 
-        error: `File is too large (${fileSizeMB.toFixed(1)}MB). Max allowed is ${MAX_FILE_SIZE_MB}MB.` 
-      }, { status: 413 });
-    }
-
     // ==========================================
-    // 3. UPLOAD TO GEMINI ENGINE
+    // 2. FETCH FROM VERCEL BLOB
     // ==========================================
     
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    const body = await req.json();
+    const { videoUrl, profile, fileName } = body;
+
+    if (!videoUrl) {
+      return NextResponse.json({ error: "No video URL provided" }, { status: 400 });
+    }
+
+    console.log("Downloading video from Vercel Blob to temporary storage...");
+    const videoResponse = await fetch(videoUrl);
+    if (!videoResponse.ok) throw new Error("Failed to fetch video from cloud storage.");
+
+    // Load the file into the server's temporary RAM
+    const arrayBuffer = await videoResponse.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
     
-    tempFilePath = join(os.tmpdir(), `${Date.now()}-${file.name}`);
+    tempFilePath = join(os.tmpdir(), `${Date.now()}-${fileName}`);
     await writeFile(tempFilePath, buffer);
 
+    // ==========================================
+    // 3. UPLOAD TO GEMINI ENGINE & CLEANUP
+    // ==========================================
+    
     console.log("Uploading to Gemini File API...");
     const uploadResult = await fileManager.uploadFile(tempFilePath, {
-      mimeType: file.type,
-      displayName: file.name,
+      mimeType: "video/mp4", // Or detect dynamically
+      displayName: fileName,
     });
 
     const geminiFile = uploadResult.file;
-    console.log(`Uploaded as ${geminiFile.name} (${geminiFile.uri})`);
+    console.log(`Uploaded to Gemini as ${geminiFile.name}`);
+
+    // DESTROY THE VERCEL BLOB (Saves you money!)
+    await del(videoUrl);
 
     let fileState = await fileManager.getFile(geminiFile.name);
-    while (fileState.state === "PROCESSING") {
-      console.log("Waiting for video processing...");
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      fileState = await fileManager.getFile(geminiFile.name);
-    }
-
-    if (fileState.state === "FAILED") {
-      throw new Error("Video processing failed on Google's end.");
-    }
-
+    // ... [The rest of your code remains exactly the same from the "while (fileState.state === 'PROCESSING')" loop down to the end] ...
     // ==========================================
     // 4. RUN THE COMPLIANCE AUDIT
     // ==========================================

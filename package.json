@@ -13,6 +13,7 @@
     "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.19.3",
     "@stripe/stripe-js": "^9.5.0",
+    "@vercel/blob": "^2.4.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
