@@ -6,6 +6,7 @@ import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import os from "os";
 import { del } from '@vercel/blob';
+
 // Your custom SaaS imports
 import prisma from "@/lib/prisma";
 import { PLAN_LIMITS, MAX_FILE_SIZE_MB } from "@/lib/pricing";
@@ -32,7 +33,6 @@ async function callGeminiWithRetry(model: any, promptData: any[], maxRetries = 4
         await new Promise(res => setTimeout(res, delay));
         delay *= 2; // Double the wait time
       } else {
-        // If it's a different error (like a 400 Bad Request), throw it immediately
         throw error;
       }
     }
@@ -79,10 +79,6 @@ export async function POST(req: Request) {
     }
 
     // ==========================================
-    // 2. FILE EXTRACTION & SAFETY CHECKS
-    // ==========================================
-    
-    // ==========================================
     // 2. FETCH FROM VERCEL BLOB
     // ==========================================
     
@@ -121,7 +117,19 @@ export async function POST(req: Request) {
     await del(videoUrl);
 
     let fileState = await fileManager.getFile(geminiFile.name);
-    // ... [The rest of your code remains exactly the same from the "while (fileState.state === 'PROCESSING')" loop down to the end] ...
+    
+    // STRICT WAIT: Keep looping until the file is explicitly ACTIVE or FAILED
+    while (fileState.state !== "ACTIVE" && fileState.state !== "FAILED") {
+      console.log(`Video status is ${fileState.state}... waiting 2 seconds.`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      fileState = await fileManager.getFile(geminiFile.name);
+    }
+
+    if (fileState.state === "FAILED") {
+      await fileManager.deleteFile(geminiFile.name);
+      throw new Error("Video processing failed on Google's end. The file may be corrupted or in an unsupported format.");
+    }
+
     // ==========================================
     // 4. RUN THE COMPLIANCE AUDIT
     // ==========================================
