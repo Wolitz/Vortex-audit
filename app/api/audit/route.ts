@@ -6,36 +6,37 @@ import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import os from "os";
 import { del } from '@vercel/blob';
-
-// Your custom SaaS imports
+import OpenAI from 'openai';
 import prisma from "@/lib/prisma";
 import { PLAN_LIMITS, MAX_FILE_SIZE_MB } from "@/lib/pricing";
 
 // Initialize the SDKs
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const apiKey = process.env.GEMINI_API_KEY!;
 const genAI = new GoogleGenerativeAI(apiKey);
 const fileManager = new GoogleAIFileManager(apiKey);
 
 // ==========================================
-// HELPER: EXPONENTIAL BACKOFF FOR 503 ERRORS
+// HELPER: FALLBACK AUDIT ENGINE (Gemini -> OpenAI)
 // ==========================================
-async function callGeminiWithRetry(model: any, promptData: any[], maxRetries = 4, delay = 2000) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await model.generateContent(promptData); 
-      return response;
-    } catch (error: any) {
-      if (error.message?.includes("503") || error.status === 503) {
-        if (attempt === maxRetries) {
-          throw new Error("The AI engine is currently overloaded due to high global demand. Please try again in a few minutes.");
-        }
-        console.warn(`[Attempt ${attempt + 1}] Gemini overloaded. Retrying in ${delay}ms...`);
-        await new Promise(res => setTimeout(res, delay));
-        delay *= 2; // Double the wait time
-      } else {
-        throw error;
-      }
-    }
+async function performAudit(geminiFile: any, prompt: string) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const result = await model.generateContent([
+      { fileData: { mimeType: geminiFile.mimeType, fileUri: geminiFile.uri } },
+      { text: prompt },
+    ]);
+    return result.response.text();
+  } catch (error) {
+    console.error("Gemini failed, falling back to OpenAI...", error);
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "You are an elite YouTube Compliance Auditor." },
+        { role: "user", content: `${prompt}\n\nVideo URL for reference: ${geminiFile.uri}` }
+      ],
+    });
+    return completion.choices[0].message.content!;
   }
 }
 
@@ -47,13 +48,11 @@ export async function POST(req: Request) {
     // 1. THE BOUNCER: AUTH & SUBSCRIPTION CHECKS
     // ==========================================
     
-    // Get the logged-in user
     const session = await getServerSession();
     if (!session?.user?.email) {
       return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
     }
 
-    // Fetch their fresh profile from the database
     const user = await prisma.user.findUnique({
       where: { email: session.user.email }
     });
@@ -62,14 +61,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "User profile not found." }, { status: 404 });
     }
 
-    // STRICT PAYWALL: Block access until they select a tier
     if (user.planTier === "FREE" || user.planTier === "FREE_TRIAL") {
       return NextResponse.json({ 
         error: "Access Denied: You must start a 7-day free trial to unlock the Audit Engine." 
       }, { status: 403 });
     }
 
-    // TIER LIMITS CHECK: Make sure they have capacity for their specific plan
     const currentLimit = PLAN_LIMITS[user.planTier as keyof typeof PLAN_LIMITS] || 0;
     
     if (user.videosAudited >= currentLimit) {
@@ -77,11 +74,6 @@ export async function POST(req: Request) {
         error: `Monthly limit reached (${currentLimit}/${currentLimit}). Upgrade your plan to keep auditing!` 
       }, { status: 429 });
     }
-
-    // ==========================================
-    // 2. FETCH FROM VERCEL BLOB
-    // ==========================================
-    
 
     // ==========================================
     // 2. FETCH FROM VERCEL BLOB
@@ -96,10 +88,8 @@ export async function POST(req: Request) {
 
     console.log(`Attempting to download video from Vercel Blob: ${videoUrl}`);
     
-    // Safely encode the URL string to prevent 404 formatting errors
     const safeUrl = new URL(videoUrl).toString();
     
-    // Use 'no-store' to bypass Next.js cache bugs and fetch using the safeUrl
     const videoResponse = await fetch(safeUrl, { 
       cache: 'no-store',
       headers: { 'Accept': '*/*' }
@@ -111,33 +101,31 @@ export async function POST(req: Request) {
       throw new Error(`Failed to fetch video from cloud storage (Status ${videoResponse.status}).`);
     }
 
-    // Load the file into the server's temporary RAM
     const arrayBuffer = await videoResponse.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     
-    // Remove spaces from the filename to prevent processing errors
     const safeFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
     tempFilePath = join(os.tmpdir(), `${Date.now()}-${safeFileName}`);
     await writeFile(tempFilePath, buffer);
+
     // ==========================================
     // 3. UPLOAD TO GEMINI ENGINE & CLEANUP
     // ==========================================
     
     console.log("Uploading to Gemini File API...");
     const uploadResult = await fileManager.uploadFile(tempFilePath, {
-      mimeType: "video/mp4", // Or detect dynamically
+      mimeType: "video/mp4",
       displayName: fileName,
     });
 
     const geminiFile = uploadResult.file;
     console.log(`Uploaded to Gemini as ${geminiFile.name}`);
 
-    // DESTROY THE VERCEL BLOB (Saves you money!)
+    // DESTROY THE VERCEL BLOB
     await del(videoUrl);
 
     let fileState = await fileManager.getFile(geminiFile.name);
     
-    // STRICT WAIT: Keep looping until the file is explicitly ACTIVE or FAILED
     while (fileState.state !== "ACTIVE" && fileState.state !== "FAILED") {
       console.log(`Video status is ${fileState.state}... waiting 2 seconds.`);
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -154,14 +142,6 @@ export async function POST(req: Request) {
     // ==========================================
     
     console.log("Running compliance audit...");
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-3.5-flash",
-      generationConfig: {
-        temperature: 0, 
-        topK: 1,
-        topP: 0.1,
-      }
-    });
 
     const YOUTUBE_CODEX_2026 = `
       YOUTUBE ADVERTISER-FRIENDLY CONTENT GUIDELINES (CORE 4):
@@ -217,18 +197,13 @@ export async function POST(req: Request) {
       }
     `;
 
-    // Swap the original call with the retry wrapper
-    const result = await callGeminiWithRetry(model, [
-      { fileData: { mimeType: geminiFile.mimeType, fileUri: geminiFile.uri } },
-      { text: prompt },
-    ]);
+    // 🚀 THE FIX: We now use your new fallback function instead of the old retry one!
+    const responseText = await performAudit(geminiFile, prompt);
 
-    // Ensure result exists before trying to access .response.text()
-    if (!result || !result.response) {
-       throw new Error("Received an empty response from the AI engine.");
+    if (!responseText) {
+       throw new Error("Received an empty response from the AI engines.");
     }
 
-    const responseText = result.response.text();
     const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
     // Clean up Google Cloud files
