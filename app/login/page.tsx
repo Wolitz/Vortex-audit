@@ -1,6 +1,7 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import Link from "next/link";
 import { Sparkles, ShieldCheck, Zap } from "lucide-react";
 
 export default function LoginPage() {
@@ -50,8 +51,16 @@ export default function LoginPage() {
           </div>
         </button>
 
-        <p className="text-center text-xs text-gray-600 mt-6">
-          Authorized personnel only. Sessions are monitored.
+        {/* Updated Consent Disclaimer */}
+        <p className="text-center text-xs text-gray-500 mt-6 leading-relaxed">
+          By continuing, you agree to our <br/>
+          <Link href="/terms" className="text-[#2DD4BF] hover:text-[#A78BFA] hover:underline transition-colors">
+            Terms of Service
+          </Link>
+          {" "}and{" "}
+          <Link href="/privacy" className="text-[#2DD4BF] hover:text-[#A78BFA] hover:underline transition-colors">
+            Privacy Policy
+          </Link>.
         </p>
       </div>
     </div>
