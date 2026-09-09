@@ -1,5 +1,17 @@
 // lib/blob.ts
 
+/**
+ * Must match the Blob store's access mode (set at store creation, cannot be
+ * changed later). Client-token uploads with `access: 'private'` PUT to
+ * vercel.com/api/blob with an Authorization header, and that host does not
+ * send CORS headers to custom domains — so private stores use a presigned PUT
+ * instead. Public stores keep the original client-token flow.
+ *
+ * NEXT_PUBLIC_ so the browser can pick the matching upload method.
+ */
+export const BLOB_ACCESS: "public" | "private" =
+  process.env.NEXT_PUBLIC_BLOB_ACCESS === "private" ? "private" : "public";
+
 /** All uploads for a user live under this prefix inside the blob store. */
 export function userScopedPrefix(userId: string): string {
   return `uploads/${userId}/`;

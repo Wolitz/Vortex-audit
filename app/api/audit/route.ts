@@ -11,7 +11,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import prisma from "@/lib/prisma";
 import { requireEnv, optionalEnv } from "@/lib/env";
-import { isOwnedBlobPathname } from "@/lib/blob";
+import { isOwnedBlobPathname, BLOB_ACCESS } from "@/lib/blob";
 import {
   ALLOWED_VIDEO_TYPES,
   MAX_FILE_SIZE_BYTES,
@@ -232,7 +232,7 @@ export async function POST(req: Request) {
     // Read the blob with the store token. The client only ever supplies a
     // pathname, so there is no attacker-controlled host to fetch.
     const blobResult = await get(pathname, {
-      access: "private",
+      access: BLOB_ACCESS,
       abortSignal: AbortSignal.timeout(BLOB_READ_TIMEOUT_MS),
     });
 
