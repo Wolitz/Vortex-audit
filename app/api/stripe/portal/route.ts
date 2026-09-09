@@ -1,39 +1,37 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
-import Stripe from "stripe";
-import { authOptions } from "../../auth/authOptions";
-import { PrismaClient } from "@prisma/client";
+import { appUrl } from "@/lib/env";
+import { getAuthOptions } from "../../auth/authOptions";
+import prisma from "@/lib/prisma";
+import { getStripe } from "@/lib/stripe";
 
-const prisma = new PrismaClient();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-  apiVersion: "2026-04-22.dahlia", 
-});
+export const runtime = "nodejs";
 
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return new NextResponse("Unauthorized", { status: 401 });
+    const stripe = getStripe();
+    const session = await getServerSession(getAuthOptions());
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    // --- THE FIX: Explicitly select the stripeCustomerId ---
     const dbUser = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { stripeCustomerId: true } // This forces TypeScript to recognize it!
+      select: { stripeCustomerId: true },
     });
 
     if (!dbUser?.stripeCustomerId) {
-      return new NextResponse("No active subscription found.", { status: 400 });
+      return NextResponse.json({ error: "No active subscription found." }, { status: 400 });
     }
 
-    // Generate the secure portal link
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: dbUser.stripeCustomerId,
-      return_url: `${process.env.NEXTAUTH_URL}/`, // Send them back to the dashboard when done
+      return_url: `${appUrl()}/`,
     });
 
     return NextResponse.json({ url: portalSession.url });
-
   } catch (error) {
     console.error("[STRIPE_PORTAL_ERROR]", error);
-    return new NextResponse("Internal Server Error", { status: 500 });
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
