@@ -1,7 +1,7 @@
 // app/sitemap.ts
 
 import type { MetadataRoute } from "next";
-import { appUrl } from "@/lib/env";
+import { SITE_URL } from "@/lib/seo";
 
 /**
  * Public, crawlable routes only. Authenticated views and /login are omitted:
@@ -18,7 +18,7 @@ const routes = [
 }>;
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const base = appUrl();
+  const base = SITE_URL;
   // Static export, so this resolves once at build time rather than per crawl.
   const lastModified = new Date();
 
