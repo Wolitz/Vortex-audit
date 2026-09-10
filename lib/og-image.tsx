@@ -99,27 +99,3 @@ export function createOgImage() {
     }
   );
 }
-
-export function createSquareIcon(size: number) {
-  return new ImageResponse(
-    (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#060606",
-          color: "#2DD4BF",
-          fontSize: Math.round(size * 0.46),
-          fontWeight: 800,
-          letterSpacing: "-0.06em",
-        }}
-      >
-        W
-      </div>
-    ),
-    { width: size, height: size }
-  );
-}

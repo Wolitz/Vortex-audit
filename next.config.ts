@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/favicon.ico",
-        destination: "/icon",
+        destination: "/logo.svg",
       },
       {
         source: "/apple-touch-icon.png",
